@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    <title>Hygraph Entry Lock App</title>
+
+    <link rel="stylesheet" type="text/css" href="./style.css" />
+    <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css?family=Inter:500" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.2/css/all.min.css"
+      integrity="sha512-1sCRPdkRXhBV2PBLUdRb4tMg1w2YPf37qatUFeS7zlBy7jJI8Lf4VHwWfZZfpXtYSLy85pkm9GaYVYMfw5BC1A=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />    
+    
+    <script src="https://cdn.jsdelivr.net/npm/@graphcms/zoid@9.0.64-alpha.3/lib/zoid.min.js"></script>    
+    <script src="https://cdn.jsdelivr.net/npm/@graphcms/app-sdk@0.0.5/dist/app-sdk.umd.production.min.js"></script>
+
+    <script>
+      ((props = null) => {
+
+        function setButtonEnabled(enabled) {
+          document.getElementById("submit").disabled = !enabled;
+        } 
+
+        function setButtonLoading(loading = false) {
+          if (loading) {
+            setButtonEnabled(false);
+            document.getElementById("submitButtonText").style.display = "none";
+            document.getElementById("buttonSpinner").style.display = "block";
+            return;
+          }
+          setButtonEnabled(true);
+          document.getElementById("submitButtonText").style.display = "block";
+          document.getElementById("buttonSpinner").style.display = "none";
+        }
+
+        function updateButtonAndText() {
+          const setupMessage = document.getElementById("setupMessage");
+          const submitButton = document.getElementById("submit");
+          if (props.installation.status === "COMPLETED") {
+            setupMessage.innerText = "App successfully installed";
+            submitButton.style.display = "none";
+          } else {
+            setupMessage.innerText = "App installation pending";
+            submitButton.style.display = "block";
+          }
+        }
+        
+        function setAppInstallationComplete() {
+          props.updateInstallation({
+            status: "COMPLETED",
+          });
+        }        
+        
+        async function getMigrationStatus(migrationId) {
+          if (!props) return;
+          const response = await fetch(
+            props.context.project.mgmtApi,
+            {
+              method: 'post',
+              body: JSON.stringify({
+                query: `query getMigrationStatus {
+                          viewer {
+                            project(id: "${props.context.project.id}") {
+                              environment(name: "${props.context.environment.name}") {
+                                migration(id: "${migrationId}") {
+                                  status
+                                }
+                              }
+                            }
+                          }
+                        }`
+              }),
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: 'Bearer ' + props.context.project.mgmtToken,
+              },
+            }
+          );
+          const json = await response.json();
+          return json.data.viewer.project.environment.migration.status;
+        }
+
+        async function submitButtonClicked(event) {
+          event.preventDefault();
+          if (!props) return;
+          setButtonLoading(true);
+
+          const mgmtBaseUrl = props.context.project.mgmtApi
+            .split("/")
+            .slice(0, -1)
+            .join("/");    
+          const code = (new URL(window.location.href)).searchParams.get('code');
+
+          //Install system model to keep track of locks (through pipedream) - will return migration ID
+          const installModelUrl = `https://eoftb03ncnobz4m.m.pipedream.net`;
+          const response = await fetch(installModelUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              exchangeCode: code,
+              mgmtBaseUrl: mgmtBaseUrl,
+              projectId: props.context.project.id,
+              environmentId: props.context.environment.id,
+              environmentName: props.context.environment.name, 
+            }),
+          })
+          const data = await response.json();
+
+          //Use migration ID to poll if migration is done
+          const poll = async (migrationId) => {
+            let attempts = 0;
+
+            const executePoll = async (resolve, reject) => {
+              const status = await getMigrationStatus(migrationId);
+              attempts++;
+
+              if (status === "SUCCESS") {
+                setAppInstallationComplete();
+                setButtonLoading(false);
+              }else if (status === "QUEUED" || status === "RUNNING") {
+                setTimeout(executePoll, 500, resolve, reject);
+              } else if (attempts === 10) {
+                setButtonLoading(false);
+                return reject(new Error('Exceeded max attempts'));
+              } else {                
+                setButtonLoading(false);
+                return reject(new Error("Migration " + status));               
+              }
+            };
+
+            return new Promise(executePoll);
+          };
+          poll(data.migrationId);
+
+          return;
+        }
+
+        function doPrep() {
+          if (!props) return;
+
+          const submitButton = document.getElementById("submit");
+          submitButton.addEventListener("click", submitButtonClicked);
+
+          updateButtonAndText();
+        }
+
+        async function init() {
+          try {
+            window["@graphcms/app-sdk"].init({
+              onProps: function(newProps) {
+                props = newProps;
+                updateButtonAndText();
+              }
+            }).then((initialState) => {
+              props = initialState.props;              
+              if (initialState.status === "ok") {
+                doPrep();
+              }
+            });
+          } catch(error) {
+            console.error("Failed to init app:", error.message);
+            console.error("- error code:", error.code);
+          }
+        }
+
+        document.addEventListener("DOMContentLoaded", init);
+      })();
+      
+    </script>    
+
+  </head>
+  <body>
+    <form id="test-form">
+      <div id="setupMessage"></div>
+      <button id="submit" class="button">
+        <div id="submitButtonText">Install</div>
+        <i id="buttonSpinner" class="fa-spinner fa-solid fa-spin"></i>  
+      </button>
+    </form>
+  </body>
+</html>
