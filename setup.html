@@ -152,6 +152,7 @@
             window["@graphcms/app-sdk"].init({
               onProps: function(newProps) {
                 props = newProps;
+                console.log(props);
                 updateButtonAndText();
               }
             }).then((initialState) => {
@@ -175,7 +176,7 @@
   <body>
     <form id="test-form">
       <div id="setupMessage"></div>
-      <button id="submit" class="button">
+      <button id="submit" class="button" disabled>
         <div id="submitButtonText">Install</div>
         <i id="buttonSpinner" class="fa-spinner fa-solid fa-spin"></i>  
       </button>

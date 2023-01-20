@@ -18,9 +18,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@graphcms/app-sdk@0.0.5/dist/app-sdk.umd.production.min.js"></script>
 
     <script>
-      ((props, user = null, editableFields = null, locked = true) => {
+      ((props, user = null, editableFields = null, locked = false, error = false) => {
 
-        async function doRequest(endpoint, token, query, variables = {}) {
+        async function doHygraphRequest(endpoint, token, query, variables = {}) {
           if (!endpoint || !token || !query) return null;
           const response = await fetch(
             endpoint,
@@ -41,11 +41,9 @@
         }
 
         async function getUserData() {
-          const endpoint = (props && props.context.project.mgmtApi);
-          const authToken = (props && props.context.project.mgmtToken);
-          const data = await doRequest(
-            endpoint,
-            authToken,
+          const data = await doHygraphRequest(
+            props.context.project.mgmtApi || null,
+            props.context.project.mgmtToken || null,
             `query GetUser {
                 viewer {
                   ... on UserViewer {
@@ -59,21 +57,20 @@
                 }
               }`
           );
+          console.log(data);
           return data.viewer.user.profile;
         } 
 
         async function getEditableFields() {
-          const endpoint = (props && props.context.project.mgmtApi);
-          const authToken = (props && props.context.project.mgmtToken);
-          const data = await doRequest(
-            endpoint,
-            authToken,
-            `query getFieldVisibility($projectId: ID!, $envName: String!, $modelId: ID!) {
+          const data = await doHygraphRequest(
+            props.context.project.mgmtApi || null,
+            props.context.project.mgmtToken || null,
+            `query getFieldVisibility {
               viewer {
-                project(id: $projectId) {
-                  environment(name: $envName) {
+                project(id: "${props.context.project.id}") {
+                  environment(name: "${props.context.environment.name}") {
                     contentModel {
-                      model(id: $modelId) {
+                      model(id: "${props.model.id}") {
                         fields {
                           apiId
                           visibility
@@ -85,15 +82,9 @@
                 }
               }
             }`,
-            {
-              projectId: (props && props.context.project.id),
-              envName: (props && props.context.environment.name),
-              modelId: (props && props.model.id)
-            }
           );
           return data.viewer.project.environment.contentModel.model.fields.filter(field => !(field.isSystem) && field.visibility === "READ_WRITE").map(value => value.apiId);
         }
-
       
         async function setFormEditable(makeEditable = true) {
           const formState = await props.form.getState();
@@ -128,9 +119,18 @@
 
         function setButtonEnabled(enabled) {
           document.getElementById("lockButton").disabled = !enabled;
-        }          
+        }
         
-        function updateMessageAndButton(locked, userId = "", userName = "") {
+        function setErrorState() {        
+          const warning = document.getElementById("warning");
+          const message = document.getElementById("message");
+          const button = document.getElementById("lockButton");
+          warning.style.display = "block";
+          message.innerText = "Unable to read locks";
+          button.style.display = "none";
+        }
+
+        function updateMessageAndButton(lockUserId = "", lockUserName = "") {
           const warning = document.getElementById("warning");
           const message = document.getElementById("message");
           if (!locked) {
@@ -139,135 +139,140 @@
             setButtonText("Lock Entry");
             setButtonEnabled(true);
           } else {
-            if (user && user.id === userId) {
+            if (user && user.id === lockUserId) {
               warning.style.display = "block";
               message.innerText = "Locked by you";
               setButtonText("Unlock Entry");
               setButtonEnabled(true);
-            } else if (user) {
+            } else {
               warning.style.display = "block";
-              message.innerText = "Locked by user " + userName;
+              message.innerText = "Locked by user " + lockUserName;
               setButtonText("Unlock Entry");
               setButtonEnabled(false);
             }
-
           }
         }
 
         async function getLock() {
-          const endpoint = (props && props.context.environment.endpoint);
-          const authToken = (props && props.context.environment.authToken);
-          const entryId = (props && props.entry.id);
-          if (!endpoint || !authToken || !entryId) {
+          const entryId = (props.entry.id) || null;
+          if (!user || !entryId) {
+            return null;
+          }          
+
+          const getLockUrl = "https://eo18drxv8gl7075.m.pipedream.net";
+          const response = await fetch(getLockUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: props.context.environment.endpoint,
+              environmentId: props.context.environment.id,
+              entryId: entryId,
+            }),
+          })
+
+          //if unsuccessful, show error and return
+          if (!response.ok) {
+            error = true;
             return null;
           }
-
-          const data = await doRequest(
-            endpoint,
-            authToken,
-            `query FindLock($entryId: String!) {
-              entryLocks(where: {entryId: $entryId}) {
-                entryId
-                userId
-                userName
-              }
-            }`,
-            {"entryId": entryId},
-          );
-
-          if (data.entryLocks && data.entryLocks.length) return data.entryLocks[0];
+          const json = await response.json();
+          if (json.data.entryLocks && json.data.entryLocks.length) return json.data.entryLocks[0];
           return null;
         }
 
         async function lockEntry() {
-          const endpoint = (props && props.context.environment.endpoint);
-          const authToken = (props && props.context.environment.authToken);
-          const entryId = (props && props.entry.id);
-          if (!endpoint || !authToken || !entryId) {
+          const entryId = (props && props.entry.id) || null;
+          if (!user || !entryId) {
+            return false;
+          }          
+          const setLockUrl = "https://eohnax70mucsi4g.m.pipedream.net";
+          const response = await fetch(setLockUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: props.context.environment.endpoint,
+              environmentId: props.context.environment.id,
+              entryId: entryId,
+              userId: user.id,
+              userName: user.name,
+            }),
+          })
+
+          //if unsuccessful, show error and return
+          if (!response.ok) {
+            console.log(response);
+            props.showToast({
+              title: "Unable to lock entry",
+              variantColor: "error",
+              duration: 5000,
+              isClosable: true,
+            });             
             return false;
           }
-
-          if (!user) {
-            user = await getUserData();
-          }
-
-          const data = await doRequest(
-            endpoint,
-            authToken,
-            `mutation SetLock($entryId: String = "", $userId: String = "", $userName: String = "") {
-              createEntryLock(data: {entryId: $entryId, userId: $userId, userName: $userName}) {
-                entryId
-              }
-            }`,
-            {
-              "entryId": entryId,
-              "userId": user.id,
-              "userName": user.name
-            }
-          );
-
-          locked = true;
-          updateMessageAndButton(true, user.id, user.name)
           
           props.showToast({
             title: "Entry locked",
             variantColor: "success",
             duration: 3000,
             isClosable: true,
-          });          
-          
+          });                    
           return true;
         }    
 
         async function unlockEntry() {
-          const endpoint = (props && props.context.environment.endpoint);
-          const authToken = (props && props.context.environment.authToken);
-          const entryId = (props && props.entry.id);
-          if (!endpoint || !authToken || !entryId) {
+          const entryId = (props && props.entry.id) || null;
+          if (!user || !entryId) {
+            return false;
+          }          
+          const remoteLockUrl = "https://eox4kphu0sstsm6.m.pipedream.net";
+          const response = await fetch(remoteLockUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: props.context.environment.endpoint,
+              environmentId: props.context.environment.id,
+              entryId: entryId,
+            }),
+          })
+
+          //if unsuccessful, show error and return
+          if (!response.ok) {
+            console.log(response);
+            props.showToast({
+              title: "Unable to unlock entry",
+              variantColor: "error",
+              duration: 5000,
+              isClosable: true,
+            });             
             return false;
           }
-
-          if (!user) {
-            user = await getUserData();
-          }
-
-          const data = await doRequest(
-            endpoint,
-            authToken,
-            `mutation removeLock($entryId: String = "") {
-              deleteEntryLock(where: {entryId: $entryId}) {
-                entryId
-              }
-            }`,
-            {
-              "entryId": entryId
-            }
-          );
-
-          locked = false;
-          updateMessageAndButton(false);
-
+        
           props.showToast({
             title: "Entry unlocked",
             variantColor: "success",
             duration: 3000,
             isClosable: true,
-          });          
-
-          return true;
+          });
+          return true;             
         }  
 
-        async function updateSidebarAndForm() {
+        async function setInitialSidebarAndFormState() {
+          if (props && props.entry.id) setFormEditable(false); //if entry exists already, make sure it is uneditable while we check locks
+          setButtonLoading(true);
           const lock = await getLock();
-          if (!lock) {
-            locked = false;
-            updateMessageAndButton(false);
+          if (error) {
             setFormEditable(true);
-            return;
-          } else {
+            setErrorState();
+          } else if (lock) {
             locked = true;
-            updateMessageAndButton(true, lock.userId, lock.userName)
+            setButtonLoading(false);
+            updateMessageAndButton(lock.userId, lock.userName)
             setFormEditable(lock.userId === user.id);
+          } else {
+            locked = false;
+            setButtonLoading(false);
+            updateMessageAndButton();
+            setFormEditable(true);
           }
         }        
 
@@ -285,9 +290,15 @@
           
           setButtonLoading(true);
           if (!locked) {
-            await lockEntry();
+            if (await lockEntry()) {
+              locked = true;
+              updateMessageAndButton(user.id, user.name)
+            }
           } else {
-            await unlockEntry();
+            if (await unlockEntry()) {
+              locked = false;
+              updateMessageAndButton()
+            };
           };
           setButtonLoading(false);
         }
@@ -298,12 +309,11 @@
           if (!editableFields) editableFields = await getEditableFields();
 
           //Set initial state
-          await updateSidebarAndForm();
+          await setInitialSidebarAndFormState();
 
           //Prep handling button
           const submitButton = document.getElementById("lockButton");
-          submitButton.addEventListener("click", toggleLock);
-          
+          submitButton.addEventListener("click", toggleLock);          
         }
 
         async function init() {

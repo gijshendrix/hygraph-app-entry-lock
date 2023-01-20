@@ -63,5 +63,6 @@ form {
 #warningIcon {
   height: 5px;
   color: rgb(227, 160, 8);
+  display: none;
 }
 
