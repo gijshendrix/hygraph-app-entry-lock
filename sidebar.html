@@ -36,12 +36,13 @@
               },
             }
           );
-          const json = await response.json();
-          return json.data;          
+          //const json = await response.json();
+          //return json.data;          
+          return response;
         }
 
         async function getUserData() {
-          const data = await doHygraphRequest(
+          const response = await doHygraphRequest(
             props.context.project.mgmtApi || null,
             props.context.project.mgmtToken || null,
             `query GetUser {
@@ -57,12 +58,12 @@
                 }
               }`
           );
-          console.log(data);
-          return data.viewer.user.profile;
+          const json = await response.json();
+          return json.data.viewer.user.profile;
         } 
 
         async function getEditableFields() {
-          const data = await doHygraphRequest(
+          const response = await doHygraphRequest(
             props.context.project.mgmtApi || null,
             props.context.project.mgmtToken || null,
             `query getFieldVisibility {
@@ -83,7 +84,8 @@
               }
             }`,
           );
-          return data.viewer.project.environment.contentModel.model.fields.filter(field => !(field.isSystem) && field.visibility === "READ_WRITE").map(value => value.apiId);
+          const json = await response.json();
+          return json.data.viewer.project.environment.contentModel.model.fields.filter(field => !(field.isSystem) && field.visibility === "READ_WRITE").map(value => value.apiId);
         }
       
         async function setFormEditable(makeEditable = true) {
@@ -159,23 +161,42 @@
             return null;
           }          
 
-          const getLockUrl = "https://eo18drxv8gl7075.m.pipedream.net";
-          const response = await fetch(getLockUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              endpoint: props.context.environment.endpoint,
-              environmentId: props.context.environment.id,
-              entryId: entryId,
-            }),
-          })
-
-          //if unsuccessful, show error and return
+          //First try direct API call
+          const response = await doHygraphRequest(
+            props.context.environment.endpoint || null,
+            props.context.environment.authToken || null,
+            `query FindLock {
+               entryLocks(where: {entryId: "${entryId}"}, stage: DRAFT) {
+                 entryId
+                 userId
+                 userName
+               }
+             }`
+          );
           if (!response.ok) {
-            error = true;
+            //query failed, likely due to missing read access, fall back to pipedream option
+            const getLockUrl = "https://eo18drxv8gl7075.m.pipedream.net";
+            const response = await fetch(getLockUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                endpoint: props.context.environment.endpoint,
+                environmentId: props.context.environment.id,
+                entryId: entryId,
+              }),
+            })
+
+            //if unsuccessful, show error and return
+            if (!response.ok) {
+              error = true;
+              return null;
+            }
+            const json = await response.json();
+            if (json.data.entryLocks && json.data.entryLocks.length) return json.data.entryLocks[0];
             return null;
           }
-          const json = await response.json();
+          
+          const json = await response.json()
           if (json.data.entryLocks && json.data.entryLocks.length) return json.data.entryLocks[0];
           return null;
         }
@@ -321,6 +342,7 @@
             window["@graphcms/app-sdk"].init({
               onProps: function(newProps) {
                 props = newProps;
+                console.log(props);
               }
             }).then((initialState) => {
               props = initialState.props;              
