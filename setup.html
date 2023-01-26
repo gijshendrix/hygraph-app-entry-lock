@@ -42,9 +42,11 @@
           if (props.installation.status === "COMPLETED") {
             setupMessage.innerText = "App successfully installed";
             submitButton.style.display = "none";
+            setButtonEnabled(false);            
           } else {
             setupMessage.innerText = "App installation pending";
             submitButton.style.display = "block";
+            setButtonEnabled(true);
           }
         }
         
