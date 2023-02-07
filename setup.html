@@ -55,35 +55,6 @@
             status: "COMPLETED",
           });
         }        
-        
-        async function getMigrationStatus(migrationId) {
-          if (!props) return;
-          const response = await fetch(
-            props.context.project.mgmtApi,
-            {
-              method: 'post',
-              body: JSON.stringify({
-                query: `query getMigrationStatus {
-                          viewer {
-                            project(id: "${props.context.project.id}") {
-                              environment(name: "${props.context.environment.name}") {
-                                migration(id: "${migrationId}") {
-                                  status
-                                }
-                              }
-                            }
-                          }
-                        }`
-              }),
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: 'Bearer ' + props.context.project.mgmtToken,
-              },
-            }
-          );
-          const json = await response.json();
-          return json.data.viewer.project.environment.migration.status;
-        }
 
         async function submitButtonClicked(event) {
           event.preventDefault();
@@ -110,33 +81,16 @@
             }),
           })
           const data = await response.json();
-
-          //Use migration ID to poll if migration is done
-          const poll = async (migrationId) => {
-            let attempts = 0;
-
-            const executePoll = async (resolve, reject) => {
-              const status = await getMigrationStatus(migrationId);
-              attempts++;
-
-              if (status === "SUCCESS") {
-                setAppInstallationComplete();
-                setButtonLoading(false);
-              }else if (status === "QUEUED" || status === "RUNNING") {
-                setTimeout(executePoll, 500, resolve, reject);
-              } else if (attempts === 10) {
-                setButtonLoading(false);
-                return reject(new Error('Exceeded max attempts'));
-              } else {                
-                setButtonLoading(false);
-                return reject(new Error("Migration " + status));               
-              }
-            };
-
-            return new Promise(executePoll);
-          };
-          poll(data.migrationId);
-
+          if (data.status === "SUCCESS") {
+            setAppInstallationComplete();
+            setButtonLoading(false);
+          } else if (data.status === "TIMEOUT") {
+            setButtonLoading(false);
+            console.error("Cannot get migration status");
+          } else {                
+            setButtonLoading(false);
+            console.error("Migration " + data.migrationId + " " + data.status);               
+          }          
           return;
         }
 
@@ -154,7 +108,6 @@
             window["@graphcms/app-sdk"].init({
               onProps: function(newProps) {
                 props = newProps;
-                console.log(props);
                 updateButtonAndText();
               }
             }).then((initialState) => {
