@@ -36,59 +36,36 @@
               },
             }
           );
-          //const json = await response.json();
-          //return json.data;          
           return response;
         }
 
         async function getUserData() {
           const response = await doHygraphRequest(
-            props.context.project.mgmtApi || null,
-            props.context.project.mgmtToken || null,
+            props.context.environment.endpoint || null,
+            props.context.environment.authToken || null,
             `query GetUser {
-                viewer {
-                  ... on UserViewer {
-                    user {
-                      profile {
-                        name
-                        id
-                      }
-                    }
-                  }
+                user(where:{
+                  id:"$.token.user.id"
+                }){
+                  id
+                  kind
+                  name
                 }
+                
               }`
           );
+          if (!response) return null;
           const json = await response.json();
-          return json.data.viewer.user.profile;
+          return json.data.user;          
         } 
 
         async function getEditableFields() {
-          const response = await doHygraphRequest(
-            props.context.project.mgmtApi || null,
-            props.context.project.mgmtToken || null,
-            `query getFieldVisibility {
-              viewer {
-                project(id: "${props.context.project.id}") {
-                  environment(name: "${props.context.environment.name}") {
-                    contentModel {
-                      model(id: "${props.model.id}") {
-                        fields {
-                          apiId
-                          visibility
-                          isSystem
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }`,
-          );
-          const json = await response.json();
-          return json.data.viewer.project.environment.contentModel.model.fields.filter(field => !(field.isSystem) && field.visibility === "READ_WRITE").map(value => value.apiId);
+          const fields = props.model.fields.filter(field => !(field.isSystem) && field.visibility === "READ_WRITE").map(value => value.apiId);
+          return fields;
         }
       
         async function setFormEditable(makeEditable = true) {
+          if (!editableFields) return;
           const formState = await props.form.getState();
           const fieldnames = (formState && formState.modified) ? Object.keys(formState.modified) : [];
 
@@ -125,9 +102,11 @@
         
         function setErrorState() {        
           const warning = document.getElementById("warning");
+          const warningIcon = document.getElementById("warningIcon");
           const message = document.getElementById("message");
           const button = document.getElementById("lockButton");
           warning.style.display = "block";
+          warningIcon.style.color = "#E53E3E";
           message.innerText = "Unable to read locks";
           button.style.display = "none";
         }
@@ -173,7 +152,7 @@
                }
              }`
           );
-          if (!response.ok) {
+          if (!response || !response.ok) {
             //query failed, likely due to missing read access, fall back to pipedream option
             const getLockUrl = "https://eo18drxv8gl7075.m.pipedream.net";
             const response = await fetch(getLockUrl, {
@@ -233,8 +212,8 @@
           
           props.showToast({
             title: "Entry locked",
-            variantColor: "success",
-            duration: 3000,
+            variantColor: "warning",
+            duration: 5000,
             isClosable: true,
           });                    
           return true;
@@ -328,6 +307,7 @@
           //Find user details & editable fields
           if (!user) user = await getUserData();
           if (!editableFields) editableFields = await getEditableFields();
+          if (!user || !editableFields) return;
 
           //Set initial state
           await setInitialSidebarAndFormState();
@@ -342,11 +322,11 @@
             window["@graphcms/app-sdk"].init({
               onProps: function(newProps) {
                 props = newProps;
-                console.log(props);
               }
             }).then((initialState) => {
               props = initialState.props;              
               if (initialState.status === "ok") {
+                //console.log(props);                
                 doPrep();
               }
             });
